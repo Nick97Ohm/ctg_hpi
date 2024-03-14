@@ -14,7 +14,7 @@ from pyplexity import PerplexityModel
 
 ################
 
-def main():
+def parse_arguments():
 
     parser = argparse.ArgumentParser(description="style transfer")
     parser.add_argument("--normalize", type= bool, default=False)
@@ -24,7 +24,6 @@ def main():
     parser.add_argument("--n_samples", type=int, help="number of changes to make in the gibbs chain", default=20)
     parser.add_argument("--batch_size", type=int, help="number of changes to make in the gibbs chain", default=20)
     parser.add_argument("--temperature", type=float, help="number of changes to make in the gibbs chain", default=1.0)
-    parser.add_argument("--degenerate", action='store_true')
     parser.add_argument("--shuffle_positions", action='store_true')
 
     parser.add_argument("--data_path", type=str, help="dir", default='./data/yelp')
@@ -78,7 +77,7 @@ def prepare_input(line, sentiment, f_meta, f):
         max_len=max_len,
         temperature=temperature,
         max_iter=args.max_iter,
-        args=args
+        args2=args
     )
 
     sents = list(map(lambda x: " ".join(detokenize(x)), bert_sents))
@@ -188,8 +187,8 @@ def energy_score_disc(batch, model_disc, sentiment=0, alpha=0):
 
     classes = output.shape[-1]
     for i in range(classes):
-        if i == sentiment:
-            raw_score += np.array(output[:, i].cpu().detach())
+        #if i == sentiment:
+        raw_score += np.array(output[:, i].cpu().detach())
 
     return [-1.0 * raw_s * alpha for raw_s in raw_score], pred
 
@@ -258,23 +257,23 @@ def parallel_sequential_generation(
         for positions in groups:
 
             distance = np.sum(1 - np.array((batch == batch_original).detach().cpu()) * 1, axis=-1)
-            disc_1, disc_preds = energy_score_disc(batch, model_disc=model_disc, sentiment=sentiment, alpha=args3.alpha)
+            disc_score, disc_preds = energy_score_disc(batch, model_disc=model_disc, sentiment=sentiment, alpha=args3.alpha)
             # start_time_mlm = time.time()
             # if iteration > 0:
             #     old_r, old_norm = np.array(perplexity_score(batch,args3.beta))+np.array([disc_1,disc_2])
             # else:
             #     old_r, old_norm = np.array([[1.0]*batch_size, [1.0]*batch_size])+np.array([disc_1,disc_2])
 
-            fluency_1 = fluency_energy(batch, args3.beta)
+            fluency_score = fluency_energy(batch, args3.beta)
             if args.normalize:
-                fluency_norm, global_max_value, global_min_value = min_max_normalization(fluency_1, global_max_value, global_min_value)
-                print(fluency_1)
-                disc_norm, global_max_value_disc, global_min_value_disc = min_max_normalization(disc_1, global_max_value_disc, global_min_value_disc)
+                fluency_score, global_max_value, global_min_value = min_max_normalization(fluency_score, global_max_value, global_min_value)
+
+                disc_score, global_max_value_disc, global_min_value_disc = min_max_normalization(disc_score, global_max_value_disc, global_min_value_disc)
                 print(global_max_value)
                 print(global_min_value)
                 print("Fluency Norm")
-                print(fluency_norm)
-            old_r = np.array(fluency_norm) + np.array(disc_norm)
+                print(fluency_score)
+            old_r = np.array(fluency_score) + np.array(disc_score)
             old_r += args3.delta * distance
             old_wrd = batch[:, positions].detach().clone()
 
@@ -307,12 +306,12 @@ def parallel_sequential_generation(
             batch[:, positions] = new_wrd
 
             distance_new = np.sum(1 - np.array((batch == batch_original).detach().cpu()) * 1, axis=-1)
-            disc_1, disc_preds_new = energy_score_disc(batch, model_disc=model_disc, sentiment=sentiment, alpha=args3.alpha)
+            disc_1_new, disc_preds_new = energy_score_disc(batch, model_disc=model_disc, sentiment=sentiment, alpha=args3.alpha)
             fluency_1_new = fluency_energy(batch, args3.beta)
             if args.normalize:
-                fluency_norm_new, global_max_value, global_min_value = min_max_normalization(fluency_1_new, global_max_value, global_min_value)
-                disc_norm_new, global_max_value_disc, global_min_value_disc = min_max_normalization(disc_1, global_max_value_disc, global_min_value_disc)
-            new_r = np.array(fluency_norm_new) + np.array(disc_1)
+                fluency_1_new, global_max_value, global_min_value = min_max_normalization(fluency_1_new, global_max_value, global_min_value)
+                disc_1_new, global_max_value_disc, global_min_value_disc = min_max_normalization(disc_1_new, global_max_value_disc, global_min_value_disc)
+            new_r = np.array(fluency_1_new) + np.array(disc_1_new)
             new_r += args3.delta * distance_new
 
 
@@ -415,9 +414,8 @@ def generate_samples(input=""):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate samples based on user input sentences.")
-    args = main()
 
+    args = parse_arguments()
     model, tokenizer, tokenizer_disc, model_disc, model_perp = load_models()
 
 
@@ -430,7 +428,7 @@ if __name__ == "__main__":
     cls_id = tokenizer.convert_tokens_to_ids([CLS])[0]
 
     #
-    degenerate = args.degenerate
+
     temperature = args.temperature
     dirname = args.out_path
     n_samples = args.n_samples
@@ -443,7 +441,7 @@ if __name__ == "__main__":
 
     now = datetime.now()
     dt_string = now.strftime("%d_%m_%Y_%H_%M_%S")
-    folder_name = "disc_{}_data_{}_max_iter_{}_date_{}".format(args.disc_name, args.data_name, args.max_itedt_string)
+    folder_name = "disc_{}_data_{}_max_iter_{}_date_{}".format(args.disc_name, args.data_name, args.max_iter, dt_string)
 
     directory = "{}/{}".format(dirname, folder_name)
     if not os.path.exists(directory):

@@ -1,4 +1,5 @@
-python -Wignore ./mix_match_code/get_metrics/metric.py  --checkpoint_dir sample_generations/output_samples_bias_sentiment/yelp_imdb/mix_match_short \
+python -Wignore ./mix_match_code/get_metrics/metric.py \
+--checkpoint_dir sample_generations/output_samples_bias_sentiment/yelp_imdb/mix_match_short \
 --attr_file ./data/yelp/test_li.attr \
 --text_file ./data/yelp/test_li.txt \
 --ref_file ./data/yelp/test_li_reference.txt \

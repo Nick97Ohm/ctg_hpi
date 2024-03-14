@@ -290,7 +290,7 @@ acc_ext,acc_to_0_ext, acc_to_1_ext = 1, 1, 1
 
 #internal clsf
 get_external_cls(checkpoint_dir, args.clsf_name, file_name='opt_samples.txt',out_file_name='opt_cls_met.txt')
-cnt, acc,acc_to_0,acc_to_1  =  get_cls_scores(attr_file,checkpoint_dir,file_name='opt_cls_met.txt') #1,1,1, 1 #
+cnt,acc,acc_to_0,acc_to_1  =  get_cls_scores(attr_file,checkpoint_dir,file_name='opt_cls_met.txt') #1,1,1, 1 #
 
 #external clsf
 if args.ext_clsf or args.lstm_clsf:
