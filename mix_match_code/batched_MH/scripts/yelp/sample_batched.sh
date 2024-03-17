@@ -1,15 +1,12 @@
-python ./mix_match_code/batched_MH/scripts/sample_batched_input_improved.py \
---single true \
---normalize true \
+python ./mix_match_code/batched_MH/scripts/mix_and_match.py \
 --fluency pyplexity \
---max_iter 4 \
+--max_iter 8 \
 --shuffle_positions \
---temperature 1.0 \
---alpha 4  \
+--alpha 100  \
 --beta 1 \
---delta 2 \
+--delta 50 \
 --disc_name  yelp_100 \
 --disc_dir  C:/Users/z0048p4n/Downloads/mix_match_model/mix_match_chkpts/mix_match_chkpts/yelp_cls_2/models/checkpoint-100 \
---data_path ./data/yelp/test_li.txt \
---attr_path ./data/yelp/test_li.attr \
+--data_path ./data/test_short.txt \
+--attr_path ./data/test_li.attr \
 --out_path ./mix_match_code/batched_MH/output_samples/yelp \

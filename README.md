@@ -37,7 +37,7 @@ For the de-biasing task, aparat from sample_batched.sh, you can run sample_batch
 To get the evaluation the metrics for the de-biasing experiment, run:
 
 ```bash
-bash ./mix_match_code/get_metrics/get_abl_metrics_yelp.sh
+bash ./mix_match_code/get_metrics/get_metrics.sh
 ```
 
 We have set some of our existing generations there, so when you run you will get metrics for those. You can also change it and replace it with your own generations. Run the script for other datasets/tasks to get their metrics. 

@@ -131,5 +131,3 @@ dmypy.json
 .pyre/
 
 
-./mix_match_code/batched_MH/output_samples
-output_samples/
