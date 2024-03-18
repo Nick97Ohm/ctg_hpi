@@ -1,83 +1,75 @@
 # Mix and Match
-Repository for ACL 2022 paper Mix and Match: Learning-free Controllable Text Generation using Energy Language Models
 
-# Creating the Environment
+## File Structure
 
+This repository contains three main folders:
 
+- **data:** Contains the Yelp dataset used in this work.
+- **mix_match_code:** Inside mix_match_code are two additional folders: batched_MH, responsible for the computation of the actual mix-and-match method, and get_metrics for the evaluation of the results. Inside each of those folders are two files for running the code. One bash file for running the respective code with specific arguments and the python file that will be executed. batched_MH additionally contains a folder for the generated output named output_samples.
+- **sample_generations:** Contains generated samples, that where used in the report or by the referenced paper
+## Shell Script Execution
+
+To start the mix-and-match method, execute the following command:
 ```bash
-conda create --name env --file package-list.txt
+bash ./mix_match_code/batched_MH/scripts/sample_batched.sh 
 ```
 
-# File structure
 
-In this repo you see mix_match_code, which contains all the scripts for running generation and evaluation. The sampl_generations directory contains sample generations, and has two folders, one for human evaluations against FUDGE and PPLM (human_evals_fudge_pplm), and the other for automatic evaluations, for sentiment and bias (output_samples_bias_sentiment). We have not included the data files for the formality, since the GYAFC dataset requires permission for access, so we cannot release it. 
+This section describes the bash file that is used to execute the Python code. The arguments passed to the script control the mode and parameters used for generating sentences.
+* `--single (true/false)`: If `true`, the code prompts for a user-input sentence instead of processing a dataset. Defaults to `false` (dataset processing).
+* `--normalize (true/false)`: When `true`, energy scores are normalized during the mix-and-match process (as explained in Section 3.4). Defaults to `false` (unnormalized scores).
+* `--fluency (mlm/pyplexity)`: Selects the method for calculating the fluency energy score: `mlm` or `pyplexity`.
+* `--max_iter (integer)`: Sets the maximum number of iterations for the sentence generation process.
+* `--alpha (float)`: Coefficient of the attribute model, controlling its influence on generated sentences.
+* `--beta (float)`: Coefficient of the fluency model, controlling its influence on generated sentences.
+* `--delta (float)`: Coefficient of the faithfulness model, controlling its influence on generated sentences.
+* `--disc_dir (path)`: Path to the directory containing the sentiment classification model.
+* `--data_path (path)`: Path to the dataset of sentences for sentiment transfer.
+* `--out_path (path)`: Path to the directory where the generated positive sentiment sentences will be stored.
 
-All the  classifier checkpoints are available [here](https://zenodo.org/record/5855005).
-
-Data for training the classifiers is available here (if you want to train your own) [here](https://drive.google.com/drive/folders/1JJE89FO4Z88fm85cmTVw1sjE7pa4Gyki?usp=sharing).
-
-# Run Generation
-
-Once you open the mix_match_code folder, place mix_match_data/data in mix_match_code/batched_MH/ and then navigate to mix_match_code/batched_MH/scripts, where you will see folders for each task. For instance, bias, is for the de-biasing task. To run the experiments, run:
+**Example Usage:**
 
 ```bash
-bash bash ./mix_match_code/batched_MH/scripts/yelp/sample_batched.sh
+python ./mix_match_code/batched_MH/scripts/sample_batched_input_improved.py \
+--single true \
+--normalize true \
+--fluency pyplexity \
+--max_iter 4 \
+--alpha 4 \
+--beta 1 \
+--delta 2 \
+--disc_dir [YOUR PATH]/mix_match_chkpts/mix_match_chkpts/yelp_cls_2/models/checkpoint-100 \
+--data_path ./data/test_li_100.txt \
+--attr_path ./data/test_li.attr \
+--out_path ./mix_match_code/batched_MH/output_samples/yelp \
 ```
+**Important:**
+Replace [YOUR PATH] in --disc_dir with the actual path to your sentiment classification model directory.
+The model can be downloaded here: https://zenodo.org/records/5855005
 
-Before running, *make sure you set the disc_dir to where you have placed your classifier*, or if it is an huggingface classifier, place the model name there. The outputs will be saved in a folder in the ``out_path'' you provide to the script. The opt_samples.txt is the cleaned, processed outputs. There is also metadata (energy values and other metrics) saved along in the output folder.  
-
-For the de-biasing task, aparat from sample_batched.sh, you can run sample_batched_boost.sh, to run our generation with the agency boosting, or sample_batched_mask.sh to run the verb replacement ablation from the paper.  The PPLM folder generates with PPLM prompts using our method (for comparison with PPLM), the topic folder does topic-oriented generation (for comparison with FUDGE), the yelp folder scripts can be used for yelp sentiment transfer, and form_em can be used for formality transfer.
-
-
-
-
-
-# Get Metrics
-
-To get the evaluation the metrics for the de-biasing experiment, run:
+## Evaluation
+To evaluate the results based on the metrics that have been presented in this work, another shell script has to be executed using the following command:
 
 ```bash
 bash ./mix_match_code/get_metrics/get_metrics.sh
 ```
 
-We have set some of our existing generations there, so when you run you will get metrics for those. You can also change it and replace it with your own generations. Run the script for other datasets/tasks to get their metrics. 
-
-
-# Runing Generation for Baselines
-For generating samples from the baseline, here are the commands we executed to get the baseline outputs, after we setup the environment by cloning the repositories.
-
-
-For Fudge:
+In the shell script itself, the attribute `--checkpoint_dir` has to be modified with the path of the created output folder and `--clsf_name` with the path where the model for sentiment classification is located. The attributes `--attr_file`, which leads to the file with the labeled sentiments, and `--text_file`, the Yelp dataset of sentences, can be kept as they are. `--ext_clsf` tells the code that the evaluation should also use an external classifier.
 
 ```bash
- python -u evaluate_topic.py --ckpt ckpt/topic/future_word_predictor/model.pth.tar --dataset_info ckpt/topic/future_word_predictor/dataset_info --prefix_file topic_data/topic_prefixes.txt --wordlist_dir topic_data/wordlists --condition_lambda 10 --verbose --precondition_topk 200 --topk 10 --sample_size 1 --max_sample_batch 1 --length_cutoff 25 --log_file topic_preds_25_lam10_1.log
+python -Wignore ./mix_match_code/get_metrics/metric.py \
+--checkpoint_dir ./mix_match_code/batched_MH/output_samples/yelp/[YOUR OUTPUT FOLDER] \
+--attr_file ./data/yelp/test_li.attr \
+--text_file ./data/yelp/test_li_100.txt \
+--ref_file ./data/yelp/test_li_reference.txt \
+--clsf_name [YOUR PATH]/mix_match_chkpts/mix_match_chkpts/yelp_cls_2/models/checkpoint-100 \
+--ext_clsf \
 ```
 
-For PPLM:
+After the execution, the evaluated metrics will be printed in the format:
 
-```bash
-python run_pplm.py -D sentiment --length 12 --gamma 1.0 --num_iterations 10 --num_samples 20 --stepsize 0.02 --kl_scale 0.03 --gm_scale 0.90 --sample
-```
+[Int. Classifier Accuracy, Ext. Classifier Accuracy, Hamming-Distance, GPT2-Perplexity, Bert-Score]
 
 
-# Get Human Result Evaluations
+Additionally, the result is stored in a `metrics.txt` file in the output folder, which has been used for the `--checkpoint_dir` attribute.
 
-You can re-produce the human evaluation  based on the generated outputs and the turk results by running the following python scripts from the root directory of the repository:
-
-
-```bash
-python ./mix_match_code/batched_MH/scripts/human_eval_result_fudge.py 
-python ./mix_match_code/batched_MH/scripts/human_eval_result.py 
-```
-
-
-# Training Classifiers
-
-You can use huggingface classifiers, or our checkpoints provided in the link on the top of the page. However, if you want to train your own, you can download the training data from [this link](https://drive.google.com/drive/folders/1JJE89FO4Z88fm85cmTVw1sjE7pa4Gyki?usp=sharing), provide the data directory to the following script and run it.
-
-```bash
-bashe ./mix_match_code/clsf_train/run_classification_bias.sh
-
-```
-
-You can run other scripts in the directory to train for other tasks/datasets. 

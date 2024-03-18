@@ -18,10 +18,10 @@ from pyplexity import PerplexityModel
 # 1. Parse args
 # ---------------------------------------------------------------------------------------------------------------------
 def parse_arguments():
-    """summary
+    """Gets the arguments from the shell script sample_batched.sh
 
     Returns:
-        type: description
+        ArgumentParser: Object for parsing command line strings into Python objects.
     """
     parser = argparse.ArgumentParser(description="style transfer")
     parser.add_argument("--normalize", type=bool, default=False)
@@ -64,20 +64,25 @@ def parse_arguments():
 # 2. Load models
 # ---------------------------------------------------------------------------------------------------------------------
 def load_models():
-    """summary
+    """Loads the necessary models. These are the Bertmodel for proposal generation,
+       a tokenizer to split the sentences into a list, the sentiment classifier
+       and the model for perplexity calculation from pyplexity
 
     Returns:
-        type: description
+        AutoModelForMaskedLM, AutoTokenizer, AutoModelForSequenceClassification, PerplexityModel
     """
-    # Load pre-trained model (weights)
-    model_version = args.model_path  # os.environ["MODEL_PATH"]
+    # Bert model
+    model_version = args.model_path
     model = AutoModelForMaskedLM.from_pretrained(model_version)
     model.eval()
 
-    # Load pre-trained model tokenizer (vocabulary)
+    # Tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.tok_path)
 
+    # Sentiment classifier
     model_disc = AutoModelForSequenceClassification.from_pretrained(args.disc_dir)
+
+    # Pyplexity language model
     model_perp = PerplexityModel.from_str("trigrams-bnc")
 
     return model, tokenizer, model_disc, model_perp
@@ -90,18 +95,22 @@ def load_models():
 # 3. Create folders for output
 # ---------------------------------------------------------------------------------------------------------------------
 def create_output_folder():
-    """summary
+    """Creates the folder where the output files are being generated
 
     Returns:
-        type: description
+        string: the folder path
     """
+    # get time to add it into the folder name
     now = datetime.now()
     dt_string = now.strftime("%d_%m_%Y_%H_%M_%S")
-    folder_name = "disc_{}data_{}max_iter_{}date{}".format(
+    folder_name = "disc_{}data_{}max_iter_{}date_{}".format(
         args.disc_name, args.data_name, args.max_iter, dt_string
     )
 
+    # full path
     directory = "{}/{}".format(args.out_path, folder_name)
+
+    # create folder if it doesn't exist already
     if not os.path.exists(directory):
         os.mkdir(directory)
 
@@ -114,17 +123,21 @@ def create_output_folder():
 # ---------------------------------------------------------------------------------------------------------------------
 # 4. Main execution
 # ----------------------------------------------------------------------------------------------------------------------
-def generate_samples(input: str):
-    """summary
+def generate_samples(input=""):
+    """Based on the --single argument here will be decided where it will get it's sentence from.
+       If --single = true then from the input mask
+       If --single = false or not declared then it will iteratively work through each sentencre from the dataset
+       Then follows the main execution for this sentence
+       At the end the output files will be written into the generated output folder 
 
     Args:
-        input (str): description
-    """    """"""
+        input (str): The sentence from the input mask when --single = true
+    """
     global args
 
     # Determine if a single input or a all data will be executed
     if args.single:
-        labeled_data = zip(input, 0)
+        labeled_data = zip([input], [0])
 
     else:
         data_file = open(f"{args.data_path}", "r")
@@ -133,19 +146,21 @@ def generate_samples(input: str):
 
     # Execute main process for all lines
     for line, src in labeled_data:
-        sentiment = int(1 - int(src[:-1]))
-
+        if isinstance(src, int):  # Check if src is an integer
+            sentiment = 1 - src
+        else:
+            sentiment = int(1 - int(src[:-1]))
         # 4.1 Tokenize samples
         # --------------------------------------------------------------------
         seed_text = tokenizer.tokenize(line[:-1])
         # --------------------------------------------------------------------
 
-        # 4.2 Create batch
+        # 4.2 Create batch of sentences
         # --------------------------------------------------------------------
         batch = torch.tensor(tokenize_batch([[CLS] + seed_text + [SEP] for _ in range(args.batch_size)]))
         # --------------------------------------------------------------------
 
-        # 4.3 Mix and match
+        # 4.3 Execute Mix and match
         # --------------------------------------------------------------------
         start_time = time.time()
         bert_sents, meta_data, full_meta_data = parallel_sequential_generation(
@@ -176,16 +191,19 @@ def generate_samples(input: str):
 
 
 def min_max_normalization(array, global_max_value=None, global_min_value=None):
-    """summary
+    """Min-max normalization method. Takes the biggest and slowest value from a set and normalizes the values
+       based on them.
+       Will only be executed when --normalize = true
 
     Args:
         array (type): description
-        global_max_value (type, optional): description. Defaults to None.
-        global_min_value (type, optional): description. Defaults to None.
+        global_max_value (float, optional): The currently highest value for this attribute. Defaults to None.
+        global_min_value (float, optional): The currently lowest value for this attribute. Defaults to None.
 
     Returns:
-        type: description
+        ndarray, flaot, float: Array with normalized values together with new highest and lowest value
     """
+    # needs to be executed when it is the first iteration or the min/max value needs to be updated
     if global_min_value is None or np.min(array) < global_min_value:
         global_min_value = np.min(array)
     if global_max_value is None or np.max(array) > global_max_value:
@@ -194,6 +212,7 @@ def min_max_normalization(array, global_max_value=None, global_min_value=None):
     if global_min_value == global_max_value:
         normalized_array = np.zeros_like(array)
     else:
+        # actual min-max-normalization
         normalized_array = (array - global_min_value) / (
                 global_max_value - global_min_value
         )
@@ -202,39 +221,38 @@ def min_max_normalization(array, global_max_value=None, global_min_value=None):
 
 
 def tokenize_batch(batch):
-    """summary
+    """Uses the loaded tokenizer to assign numerical values to each token.
+       This is needed to perform calculations with these tokens.
 
     Args:
-        batch (type): description
+        batch (torch.Tensor): batch of string-tokenized sentences
 
     Returns:
-        type: description
+        torch.Tensor: batch of tokenized sentences with numerical values
     """
     return [tokenizer.convert_tokens_to_ids(sent) for sent in batch]
 
 
 def untokenize_batch(batch):
-    """summary
+    """Converts the numerical values from the tokenized sentences back to their original string representation
 
     Args:
-        batch (type): description
+        batch (torch.Tensor): batch of tokenized sentences with numerical values
 
     Returns:
-        type: description
+        torch.Tensor: batch of string-tokenized sentences
     """
-    return [
-        tokenizer.convert_ids_to_tokens(list(sent.to("cpu").numpy())) for sent in batch
-    ]
+    return [tokenizer.convert_ids_to_tokens(list(sent.to("cpu").numpy())) for sent in batch]
 
 
 def tokens_to_sentences(tokenized_sentences):
-    """summary
-
+    """Forms the numerical representations of a batch of tokenized sentences back to their string representation.
+       This method is needed to calculate the perplexity with pyplexity
     Args:
-        tokenized_sentences (type): description
+        tokenized_sentences (torch.Tensor): batch of tokenized sentences with numerical values
 
     Returns:
-        type: description
+        list: List of string sentences
     """
     sentences = []
 
@@ -256,7 +274,7 @@ def energy_score_mlm(batch, beta=1):
         Iteratively masks each token and sums the raw logits retrieved by BERT
 
     Args:
-        batch (torch.Tensor): batch of sentences
+        batch (torch.Tensor): batch of tokenized sentences with numerical values
         beta (float, optional): Weight in calculating the overall energy. Defaults to 1.
 
     Returns:
@@ -266,6 +284,7 @@ def energy_score_mlm(batch, beta=1):
     posns = [i + 1 for i in range(seq_len)]
 
     raw_score = [0.0] * batch.shape[0]
+    # Iteratively mask each position and retrieve raw logits for this sentence from Bert
     for posn in posns:
         old_wrd = batch[:, posn].clone()
         batch[:, posn] = mask_id
@@ -278,20 +297,24 @@ def energy_score_mlm(batch, beta=1):
 
 
 def energy_score_disc(batch, model_disc, sentiment=0, alpha=0):
-    """summary
+    """Calculation of positive sentiment energy score
 
     Args:
-        batch (type): description
-        model_disc (type): description
-        sentiment (int, optional): description. Defaults to 0.
-        alpha (int, optional): description. Defaults to 0.
+        batch (torch.Tensor): batch of tokenized sentences with numerical values
+        model_disc (AutoModelForSequenceClassification): sentiment classifier
+        sentiment (int, optional): The actual labeled sentiment for this sentence. Defaults to 0.
+        alpha (int, optional): Weight in calculating the overall energy. Defaults to 0.
 
     Returns:
-        type: description
+        list, ndarray[int]: List of attribute discriminator energy scores for each sentence of the batch,
+                            Array of the predicted sentiment for each sentence
     """
     raw_score = np.array([0.0] * batch.shape[0])
 
+    # Retrieve raw logits from sentiment classifier model
     output = model_disc(batch)["logits"]
+
+    # Make predictions
     pred = np.argmax(np.array(output.log_softmax(dim=-1).cpu().detach()), axis=-1)
 
     classes = output.shape[-1]
@@ -303,39 +326,38 @@ def energy_score_disc(batch, model_disc, sentiment=0, alpha=0):
 
 
 def perplexity_score(batch, beta=1):
-    """summary
+    """The new method to calculate the fluency energy score using the perplexity retrieved from pyplexity
 
     Args:
-        batch (type): description
-        beta (int, optional): description. Defaults to 1.
+        batch (torch.Tensor): batch of tokenized sentences with numerical values
+        beta (int, optional): Weight in calculating the overall energy. Defaults to 1.
 
     Returns:
-        type: description
+        list: List of the new perplexity energy scores for each sentence of the batch
     """
-    start_time_per_bert = time.time()
+    # this package works with sentences as strings -> batch needs to be converted back
     untoken = untokenize_batch(batch)
     sentences = tokens_to_sentences(untoken)
 
     per = []
+    # evaluate perplexity for each sentence
     for sentence in sentences:
         perpl = model_perp.compute_sentence(sentence)
         per.append(perpl)
 
-    # print("Finished Perp score in %.3fs" % (time.time() - start_time_per_bert))
-    # print(per)
 
     return [perplexity * beta for perplexity in per]
 
 
 def fluency_energy(batch, beta):
-    """summary
+    """Depending on the attribute --fluency calculates one of the methods to calculate a fluency energy score
 
     Args:
-        batch (type): description
-        beta (type): description
+        batch (torch.Tensor): batch of tokenized sentences with numerical values
+        beta (int, optional): Weight in calculating the overall energy.
 
     Returns:
-        type: description
+        list: List of the relevant fluency energy scores for each sentence of the batch
     """
     if args.fluency == "pyplexity":
         return perplexity_score(batch, beta)
@@ -346,19 +368,20 @@ def fluency_energy(batch, beta):
 def parallel_sequential_generation(
         batch: torch.Tensor, model_disc, args3, sentiment=0, batch_size=10, max_iter=300
 ):
-    """summary
+    """Main execution of mix-and-match method.
 
     Args:
-        batch (torch.Tensor): description
-        model_disc (type): description
-        args3 (type): description
-        sentiment (int, optional): description. Defaults to 0.
-        batch_size (int, optional): description. Defaults to 10.
-        max_iter (int, optional): description. Defaults to 300.
+        batch (torch.Tensor): batch of tokenized sentences with numerical values
+        model_disc (AutoModelForSequenceClassification): sentiment classifier
+        args3 (ArgumentParser): Object for parsing command line strings into Python objects.
+        sentiment (int, optional): The actual labeled sentiment for this sentence. Defaults to 0.
+        batch_size (int, optional): The amount of how many sentences will be generated in each batch. Defaults to 10.
+        max_iter (int, optional): How many iterations will be performed. Defaults to 300.
 
     Returns:
-        type: description
-    """    """Generate for one random position at a timestep"""
+        torch.Tensor, list, list: batch of string-tokenized sentences, metadata for each masked position step,
+                                  metadata for each iteration step
+    """
 
     batch_original = batch.detach().clone()
 
@@ -368,6 +391,7 @@ def parallel_sequential_generation(
     full_meta_data = [[] for i in range(batch_size)]
     meta_data = []
 
+    # Create min and max values for each attribute for min-max-normalization
     global_max_value = None
     global_min_value = None
 
@@ -375,6 +399,8 @@ def parallel_sequential_generation(
     global_min_value_disc = None
     for iteration in range(max_iter):
         print("Iteration {}".format(iteration))
+
+        # if true then the masked position changes randomly without order
         if args3.shuffle_positions:
             random.shuffle(posns)
 
@@ -383,45 +409,44 @@ def parallel_sequential_generation(
         if args3.shuffle_positions:
             random.shuffle(groups)
         for positions in groups:
-            distance = np.sum(
-                1 - np.array((batch == batch_original).detach().cpu()) * 1, axis=-1
-            )
+            # Energy scores of the current sentence
+            # Hamming-Distance
+            distance = np.sum(1 - np.array((batch == batch_original).detach().cpu()) * 1, axis=-1)
+            # Sentiment classifier energy score
             disc_score, disc_preds = energy_score_disc(
                 batch, model_disc=model_disc, sentiment=sentiment, alpha=args3.alpha
             )
-            # start_time_mlm = time.time()
-            # if iteration > 0:
-            #     old_r, old_norm = np.array(perplexity_score(batch,args3.beta))+np.array([disc_1,disc_2])
-            # else:
-            #     old_r, old_norm = np.array([[1.0]*batch_size, [1.0]*batch_size])+np.array([disc_1,disc_2])
 
+            # Fluency energy score
             fluency_score = fluency_energy(batch, args3.beta)
+
+
+            #Normalization of energy values from the current sentence
             if args.normalize:
                 (
                     fluency_score,
                     global_max_value,
                     global_min_value,
-                ) = min_max_normalization(
-                    fluency_score, global_max_value, global_min_value
+                ) = min_max_normalization(fluency_score, global_max_value, global_min_value
                 )
 
                 (
                     disc_score,
                     global_max_value_disc,
                     global_min_value_disc,
-                ) = min_max_normalization(
-                    disc_score, global_max_value_disc, global_min_value_disc
+                ) = min_max_normalization(disc_score, global_max_value_disc, global_min_value_disc
                 )
-                print(global_max_value)
-                print(global_min_value)
-                print("Fluency Norm")
-                print(fluency_score)
+
+            # Summing up to overall energy score
             old_r = np.array(fluency_score) + np.array(disc_score)
             old_r += args3.delta * distance
             old_wrd = batch[:, positions].detach().clone()
 
+            # Masking a token
             batch[:, positions] = mask_id
 
+
+            #Sampling of new word with Bert
             output = model(batch)["logits"][:, positions, :]
             output[:, :, mask_id] = -10000000000.0
             output = output.softmax(dim=-1)
@@ -431,6 +456,7 @@ def parallel_sequential_generation(
 
             d = Categorical(output)
             new_wrd = d.sample()
+            # Print out newly proposed tokens
             print(untokenize_batch(new_wrd))
             n_flag = np.array([0] * batch_size)
             msk_change = [False] * batch_size
@@ -446,56 +472,58 @@ def parallel_sequential_generation(
                         msk_change[jj] = True
 
             batch[:, positions] = new_wrd
-
+            # Energy scores of the sentence
+            # Hamming-Distance
             distance_new = np.sum(
-                1 - np.array((batch == batch_original).detach().cpu()) * 1, axis=-1
-            )
+                1 - np.array((batch == batch_original).detach().cpu()) * 1, axis=-1)
+            # Sentiment classifier energy score
             disc_1_new, disc_preds_new = energy_score_disc(
                 batch, model_disc=model_disc, sentiment=sentiment, alpha=args3.alpha
             )
+            # Fluency energy score
             fluency_1_new = fluency_energy(batch, args3.beta)
+
+            # Normalization of energy values from the new sentence
             if args.normalize:
                 (
                     fluency_1_new,
                     global_max_value,
                     global_min_value,
-                ) = min_max_normalization(
-                    fluency_1_new, global_max_value, global_min_value
-                )
+                ) = min_max_normalization(fluency_1_new, global_max_value, global_min_value)
+
                 (
                     disc_1_new,
                     global_max_value_disc,
                     global_min_value_disc,
-                ) = min_max_normalization(
-                    disc_1_new, global_max_value_disc, global_min_value_disc
+                ) = min_max_normalization(disc_1_new, global_max_value_disc, global_min_value_disc
                 )
             new_r = np.array(fluency_1_new) + np.array(disc_1_new)
             new_r += args3.delta * distance_new
 
-            axbx = np.where(
-                msk_change,
-                1.0,
-                np.minimum(
-                    1.0,
-                    np.divide(
-                        np.multiply(np.exp(old_r - new_r), np.array(qxxb)),
-                        np.array(qxbx),
-                    ),
-                ),
-            )
+
+            # Metropolis-Hastings-Correction Step
+            # Calculate acceptance probability
+            axbx = np.where(msk_change,1.0,np.minimum(1.0,np.divide(
+                        np.multiply(np.exp(old_r - new_r), np.array(qxxb)),np.array(qxbx),),),)
+
+            # Transform probabilities to decisions
             acc = torch.squeeze(torch.bernoulli(torch.Tensor([axbx])))
+
+            # Apply correction or rejection
             batch[:, positions] = torch.where(
                 acc.unsqueeze(1).repeat(1, len(positions)) > 0.0,
                 batch[:, positions],
                 old_wrd,
             )
 
+            # Prepare values for meta datas
             r_score = np.squeeze(np.where(acc > 0.0, new_r, old_r))
             disc_preds = np.squeeze(np.where(acc > 0.0, disc_preds_new, disc_preds))
             distance = np.squeeze(np.where(acc > 0.0, distance_new, distance))
 
             acc = np.array(acc.cpu()) * np.array(n_flag)
 
+            # Prepare full meta data
             for i in range(batch_size):
                 full_meta_data[i].append(
                     (
@@ -510,8 +538,11 @@ def parallel_sequential_generation(
                     )
                 )
 
+    # Print out new generated sentences this iteration
     print(untokenize_batch(batch))
 
+
+    # Prepare meta data
     for i in range(batch_size):
         meta_data.append(
             (
@@ -530,13 +561,13 @@ def parallel_sequential_generation(
 
 
 def detokenize(sent):
-    """summary
+    """Forms the numerical representation of a tokenized sentence back to it's string representation
 
     Args:
-        sent (type): description
+        sent (torch.Tensor): tokenized sentence with numerical values
 
     Returns:
-        type: description
+        string: sentence
     """
     new_sent = []
     for i, tok in enumerate(sent):
@@ -548,14 +579,14 @@ def detokenize(sent):
 
 
 def get_opt_sent(sents, metadata):
-    """summary
+    """Determines the sentence with the lowest energy score out af all final sentences from the batch
 
     Args:
-        sents (type): description
-        metadata (type): description
+        sents (torch.Tensor): batch of string-tokenized sentences
+        metadata (list): list with all important values retrieved during the mix-and-match method
 
     Returns:
-        type: description
+        string, ind: Optimal sentence, Index of sentence with lowest energy inside batch
     """
     meta_array = np.array(metadata)
 
@@ -565,29 +596,33 @@ def get_opt_sent(sents, metadata):
 
 
 def generate_output(sents: list, full_meta_data: list, opt_sent: str, ind: int):
-    """summary
+    """Creates the output-files metadata.txt, opt_meta.txt, samples.txt and opt_samples.txt in the output-folder
 
     Args:
-        sents (list): description
-        full_meta_data (list): description
-        opt_sent (str): description
-        ind (int): description
+        sents (list): list of the finally generated batch of sentences
+        full_meta_data (list): metadata for each masked position step
+        opt_sent (string): best generated sentence
+        ind (int): index of the best generated sentence from the whole batch
     """
     with open(f"{dirname}/samples.txt", "a") as f, open(
             f"{dirname}/opt_samples.txt", "a"
     ) as optimal_f, open(f"{dirname}/opt_meta.txt", "a") as opt_meta_file, open(
         f"{dirname}/metadata.txt", "a"
     ) as f_meta:
+        # samples.txt file with the final batches for each sentence
         f.write("\n".join(sents) + "\n")
         f.flush()
 
+        # metadata.txt file with metadata for each masked position step
         full_meta_data_str = [str(l) for l in full_meta_data]
         f_meta.write("\n".join(full_meta_data_str) + "\n")
         f_meta.flush
 
+        # opt_samples.txt file with the best sentences from each batch
         optimal_f.write(opt_sent + "\n")
         optimal_f.flush()
 
+        # opt_meta.txt file with the metadata for the best sentence from each batch
         opt_meta_str = str(full_meta_data[ind])
         opt_meta_file.write(opt_meta_str + "\n")
         opt_meta_file.flush()
@@ -598,7 +633,7 @@ def generate_output(sents: list, full_meta_data: list, opt_sent: str, ind: int):
 
 # ---------------------------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
-    """summary
+    """Main Code execution. This code runs when mix_and_match.py is executed
     """
 
     # 1. Parse arguments
@@ -622,11 +657,12 @@ if __name__ == "__main__":
 
     # 4. Main execution
     # --------------------------------------------------------------------
-    user_input = ""
+
     if args.single:
         while True:
             user_input = input("Geben Sie einen Satz ein (oder 'exit' zum Beenden): ")
             if user_input.lower() == "exit":
                 break
-    generate_samples(user_input)
+            else: generate_samples(user_input)
+    else: generate_samples()
     # --------------------------------------------------------------------

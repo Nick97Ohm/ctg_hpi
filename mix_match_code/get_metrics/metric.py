@@ -1,26 +1,19 @@
-from nltk.translate.bleu_score import sentence_bleu
-
 import subprocess
-import re
 import argparse
 import os
-import math
 import bert_score
-
-
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 import logging
-logging.basicConfig(level='ERROR')
 import torch
 import transformers
 from transformers import AutoTokenizer, AutoModelForMaskedLM, AutoModelForSequenceClassification, AutoTokenizer, BertTokenizer
 import numpy as np 
 from transformers import GPT2LMHeadModel, GPT2TokenizerFast
+
+logging.basicConfig(level='ERROR')
 transformers.logging.set_verbosity_error()
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 parser = argparse.ArgumentParser(description="metrics")
-
 parser.add_argument("--checkpoint_dir", type=str)
 parser.add_argument("--clsf_name", type=str, default="textattack/bert-base-uncased-yelp-polarity")
 parser.add_argument("--ext_clsf_name", type=str, default="textattack/bert-base-uncased-yelp-polarity")
@@ -29,7 +22,6 @@ parser.add_argument("--text_file", type=str, default="/home/user/dir_projects/di
 parser.add_argument("--ref_file", type=str, default="/home/user/dir_projects/dir.bert_sample/sent_anlys/batched_MH/data/yelp/test_li_reference.txt")
 parser.add_argument("--ext_clsf", action="store_true")
 parser.add_argument("--reverse", action="store_true")
-parser.add_argument("--lstm_clsf", action="store_true")
 parser.add_argument("--form_em_lstm", action="store_true")
 
 
@@ -43,6 +35,7 @@ CLS = "[CLS]"
 SEP = "[SEP]"
 EOT_TOKEN = '<|endoftext|>'
 
+# Calculating the GPT-2 perplexity score
 def perplexity_fudge(checkpoint_dir,file_name='opt_samples.txt'):
     # calculate perplexity 
     gpt_model = GPT2LMHeadModel.from_pretrained("gpt2-xl").to(device)
@@ -66,116 +59,48 @@ def perplexity_fudge(checkpoint_dir,file_name='opt_samples.txt'):
                     full_tensor_input = gpt_tokenizer.encode(sos_token + sentence.replace(EOT_TOKEN, ' ').strip(), return_tensors='pt').to(device)
                     full_loss = gpt_model(full_tensor_input, labels=full_tensor_input)[0].mean()
                     ppl.append(torch.exp(full_loss).flatten().cpu().item())
-                    #print(sentence,torch.exp(full_loss).flatten().cpu().item())
-    return np.mean(ppl), np.std(ppl), np.median(ppl)
-
-  
-def energy_score_mlm(batch, model, mask_id,beta=1 ):
-
-  seq_len = len(batch[0])-2
-  posns = [i+1 for i in range(seq_len)]
-
-  norm_score = [0.0] * batch.shape[0]
-  raw_score = [0.0] * batch.shape[0]
-  for posn in posns:
-    old_wrd = batch[:,posn].clone()
-    batch[:,posn] = mask_id
-    output = model(batch)['logits'][:,posn,:]
-
-    norm_output = output.log_softmax(dim=-1)
-    for i in range(batch.shape[0]):
-        raw_score[i] += output[i,old_wrd[i]].item()
-        norm_score[i] += norm_output[i,old_wrd[i]].item()
-
-    batch[:,posn] = old_wrd
-  return [-1.0*raw_s*beta for raw_s in raw_score], [-1.0*norm_s*beta for norm_s in norm_score]
-
-def get_mlm_score(checkpoint_dir,file_name='opt_samples.txt'):
-    # calculate perplexity 
-    
-    model = AutoModelForMaskedLM.from_pretrained("bert-base-uncased").to(device)
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-    MASK = "[MASK]"
-    mask_id = tokenizer.convert_tokens_to_ids([MASK])[0]
-    with torch.no_grad():
-        with open(f"{checkpoint_dir}/{file_name}", "r") as input_file:
-                ppl = []
-                for line in input_file:
-                    sentence=line[:-1]
-                    sentence=sentence.lower()
-           
-                    #sentence=sentence.replace(' \' ','\'')
-                    #sentence=sentence.replace(' - ','-')
-                    #sentence=sentence.replace(' .','.')
-                    #sentence=sentence.replace(' ,',',')
-                    
-                    seed_text = tokenizer.tokenize(sentence)
-                    batch = torch.tensor(get_init_text(seed_text, tokenizer_disc=tokenizer, max_len=15, batch_size=1)).to(device)
-                    energy , _= energy_score_mlm(batch,model,mask_id)
-                    ppl.append(energy[0])
-                    #print(sentence,torch.exp(full_loss).flatten().cpu().item())
-    return np.mean(ppl), np.std(ppl), np.median(ppl)
-
-
+    return np.median(ppl)
 
 
 
 def get_external_cls(checkpoint_dir, disc_name, file_name='opt_samples.txt', out_file_name='opt_cls_ext.txt'):
     tokenizer_disc = BertTokenizer.from_pretrained(disc_name)  # finiteautomata/bertweet-base-sentiment-analysis ("textattack/bert-base-uncased-imdb")
     model_disc = AutoModelForSequenceClassification.from_pretrained(disc_name).to(device) #("textattack/bert-base-uncased-imdb").to(device)
-   
-   
-
 
     with open(f"{checkpoint_dir}/{out_file_name}", "w+") as f_pred_attr,open(f"{checkpoint_dir}/{file_name}", "r") as input_file:
         for i,line in enumerate((input_file)):
             
             seed_text = line[:-1].lower()
-            #seed_text = seed_text.split('\t')[1]
-            #print(seed_text)
 
             seed_text = tokenizer_disc.tokenize(seed_text)
             batch = torch.tensor(get_init_text(seed_text, tokenizer_disc=tokenizer_disc, max_len=15, batch_size=1)).to(device)
-            #print(batch.shape)
+
             pred = disc_cls(batch,model_disc,tokenizer_disc)
-            #print (pred[0])
             f_pred_attr.write(str(pred[0])+'\n')
             f_pred_attr.flush()
-   
-   
-   
-   
 
+
+# Calculate Hamming-Distance
 def get_hamming_dist_len_diff(checkpoint_dir, disc_name, src_file, file_name='opt_samples.txt', out_file_name='opt_cls_ext.txt'):
-    tokenizer_disc = BertTokenizer.from_pretrained(disc_name)  # finiteautomata/bertweet-base-sentiment-analysis ("textattack/bert-base-uncased-imdb")
+    tokenizer_disc = BertTokenizer.from_pretrained(disc_name)
    
     cnt= 0
     dist =0
-    
-    len_diff_sum =0
-   
-    list_hammings =[]
-    list_lens = []
-
 
     with open(f"{checkpoint_dir}/{file_name}", "r") as input_file, open(f"{src_file}", "r") as src_file:
         for i,(line, line_src) in enumerate(zip(input_file, src_file)):
             
             text = line[:-1].lower()
             line_src = line_src[:-1].lower()
-            #seed_text = seed_text.split('\t')[1]
-            #print(seed_text)
 
             text = tokenizer_disc.tokenize(text)
             line_src = tokenizer_disc.tokenize(line_src)
             
             if len(text) == len(line_src):
-                dist += sum([a !=b for (a,b) in zip(text,line_src)  ])
-                list_hammings.append(sum([a !=b for (a,b) in zip(text,line_src)  ]))
-                list_lens.append(0)
+                dist += sum([a !=b for (a,b) in zip(text,line_src)])
+
             
             else:
-                dist_2 =max(len(text), len(line_src))
                 dist += max(len(text), len(line_src))
                 
                 
@@ -183,53 +108,31 @@ def get_hamming_dist_len_diff(checkpoint_dir, disc_name, src_file, file_name='op
                     for element in text:
                             if element in line_src:
                                 dist -= 1
-                                dist_2 -=1
+
                 else:
                     for element in line_src:
                         if element in text:
                             dist -= 1
-                            dist_2 -=1
-                
-                
-                len_diff_sum += abs(len(text)-len(line_src))
-                
-                list_hammings.append(dist_2)
-                list_lens.append(abs(len(text)-len(line_src)))
 
             cnt+= 1
 
-    return dist/cnt, len_diff_sum/cnt, list_hammings, list_lens
-            
-            
-               
-def get_lstm_cls(checkpoint_dir, disc_name, file_name='opt_samples.txt'):
-    if not args.form_em_lstm:
-        lstm_str  = subprocess.getoutput("bash ../batched_MH/scripts/jx_cls/run_clsf.sh {0} {1}".format(checkpoint_dir, disc_name))  
-    else:
-        lstm_str  = subprocess.getoutput("bash ../batched_MH/scripts/jx_cls/run_clsf_form_em.sh {0} {1}".format(checkpoint_dir, disc_name))  
-        
-    print(lstm_str)
-    #print(lstm_str)
+    return dist/cnt
+
 
 def tokenize_batch(batch,tokenizer_disc):
     return [tokenizer_disc.convert_tokens_to_ids(sent) for sent in batch]
 
-def get_init_text(seed_text, max_len, tokenizer_disc, batch_size=1, rand_init=False):
-    """ Get initial sentence by padding seed_text with either masks or random words to max_len """
-    batch = [ [CLS]+ seed_text  + [SEP]  for _ in range(batch_size)] #TODO
+def get_init_text(seed_text, max_len, tokenizer_disc, batch_size=1):
+    batch = [[CLS]+ seed_text  + [SEP]  for _ in range(batch_size)]
 
-    return tokenize_batch(batch,tokenizer_disc)
+    return tokenize_batch(batch, tokenizer_disc)
 
 def disc_cls(batch,model_disc,tokenizer_disc):
-  #encoded_input = tokenizer(text, return_tensors='pt').to(device)
-  #tokens = encoded_input['input_ids'][0]
 
   output = model_disc(batch)['logits']
   pred = np.argmax(np.array(output.log_softmax(dim=-1).cpu().detach()),axis=-1)
 
-  #print(output.shape)
-
-  return  pred
+  return pred
 
 
 def get_cls_scores(attr_file,transfered_attr,file_name='opt_cls.txt', reverse = False):
@@ -238,7 +141,6 @@ def get_cls_scores(attr_file,transfered_attr,file_name='opt_cls.txt', reverse = 
     all_cor = 0
     all_cnt = 0
 
-    #print(reverse)
     with open(attr_file, "r") as attr , open(f"{transfered_attr}/{file_name}", "r") as transfered_attr :
         for attr,trans in zip (attr,transfered_attr):
             trg = 1- int(attr[:-1])
@@ -259,74 +161,60 @@ def get_cls_scores(attr_file,transfered_attr,file_name='opt_cls.txt', reverse = 
 
     _0_acc = all_sp_cor[0]/all_sp_cnt[0] if all_sp_cnt[0] else 0
     _1_acc = all_sp_cor[1]/all_sp_cnt[1] if all_sp_cnt[1] else 0
-    return all_cnt,all_cor/all_cnt, _0_acc,_1_acc
+    return all_cor/all_cnt
 
+# Calculating Bert-Score
 def get_bert_score(src_file,transfile):
-    bert_scorer = bert_score.BERTScorer(use_fast_tokenizer=True, lang='en')
+    bert_scorer = bert_score.BERTScorer(lang='en')
     avg =0
     cnt = 0
     with open(src_file, "r") as src , open(f"{transfile}/opt_samples.txt", "r") as trans :
         for src_sample, trans_sample in zip (src,trans):
-            #print(src_sample[:-1],trans_sample[:-1])
             P, R, F1 = bert_scorer.score([trans_sample[:-1]], [src_sample[:-1]], verbose=False, batch_size=1)
-            #score = sentence_bleu(src_sample[:-1], trans_sample[:-1])
-            #print(score)
             avg += F1
             cnt += 1
 
-    #print("bleu is:", avg/cnt)
-    #print(cnt, avg)
-    
     return avg.item()/cnt
 
 
+# Getting necessary paths
 checkpoint_dir = args.checkpoint_dir
-
 attr_file = args.attr_file
 txt_file= args.text_file
 ref_file= args.ref_file
 
-acc_ext,acc_to_0_ext, acc_to_1_ext = 1, 1, 1
 
-#internal clsf
+
+# Internal Classifier Accuracy
 get_external_cls(checkpoint_dir, args.clsf_name, file_name='opt_samples.txt',out_file_name='opt_cls_met.txt')
-cnt,acc,acc_to_0,acc_to_1  =  get_cls_scores(attr_file,checkpoint_dir,file_name='opt_cls_met.txt') #1,1,1, 1 #
+acc = get_cls_scores(attr_file, checkpoint_dir,file_name='opt_cls_met.txt')
 
-#external clsf
+# External Classifier Accuracy
+acc_ext = 1
 if args.ext_clsf or args.lstm_clsf:
     if not os.path.exists(f'{checkpoint_dir}/opt_cls_ext.txt'):
-        if args.lstm_clsf:
-            get_lstm_cls(checkpoint_dir, args.ext_clsf_name, file_name='opt_samples.txt')
-        else: 
-            get_external_cls(checkpoint_dir, args.ext_clsf_name, file_name='opt_samples.txt')
-    elif  True: #sum(1 for line in open(f'{checkpoint_dir}/opt_cls_ext.txt')) != cnt: TODO
-        if args.lstm_clsf:
-            get_lstm_cls(checkpoint_dir, args.ext_clsf_name, file_name='opt_samples.txt')
-        else: 
-            get_external_cls(checkpoint_dir, args.ext_clsf_name, file_name='opt_samples.txt')
+        get_external_cls(checkpoint_dir, args.ext_clsf_name, file_name='opt_samples.txt')
+    elif True:
+        get_external_cls(checkpoint_dir, args.ext_clsf_name, file_name='opt_samples.txt')
     
-    cnt,acc_ext,acc_to_0_ext, acc_to_1_ext =  get_cls_scores(attr_file,checkpoint_dir,file_name='opt_cls_ext.txt', reverse = args.reverse)
+    acc_ext = get_cls_scores(attr_file,checkpoint_dir,file_name='opt_cls_ext.txt', reverse = args.reverse)
 
 
-####hamming 
-dist_ham, len_diff , list_hams, list_dist = get_hamming_dist_len_diff(checkpoint_dir, args.clsf_name, src_file=args.text_file)
+# Hamming-Distance
+dist_ham = get_hamming_dist_len_diff(checkpoint_dir, args.clsf_name, src_file=args.text_file)
 
-####gpt
-mlm_mean_score = get_mlm_score(checkpoint_dir,file_name='opt_samples.txt')
+# GPT-2 perplexity
 gpt_mean_score = perplexity_fudge(checkpoint_dir,file_name='opt_samples.txt')
 
-###Bertscore
-self_bertsc = get_bert_score(txt_file,checkpoint_dir) 
-bertsc = get_bert_score(ref_file,checkpoint_dir) 
-
-
+# Bertscore
+bertsc = get_bert_score(txt_file,checkpoint_dir)
 
 
 with open(f"{checkpoint_dir}/metrics.txt", "w+") as file:
-    file.write(','.join([str(acc), str(acc_ext),str(acc_to_0_ext),str(acc_to_1_ext), str(cnt),str(acc_to_1),str(acc_to_0),str( dist_ham),str(len_diff),str(gpt_mean_score) ,str(mlm_mean_score),str(self_bertsc), str(bertsc) ,str(np.std( np.array(list_hams))),str(np.std(np.array(list_dist)))]))
+    file.write(','.join([str(acc), str(acc_ext),str(dist_ham),str(gpt_mean_score), str(bertsc)]))
     file.flush()
     file.close()
-    print(','.join([str(acc), str(acc_ext),str(acc_to_0_ext),str(acc_to_1_ext),str(cnt),str(acc_to_1),str(acc_to_0),str( dist_ham),str(len_diff), str(gpt_mean_score),str(mlm_mean_score) ,str(self_bertsc), str(bertsc) , str(np.std(np.array( list_hams))),str(np.std(np.array(list_dist)))]))
+    print(','.join([str(acc), str(acc_ext),str(dist_ham), str(gpt_mean_score), str(bertsc)]))
 
         
 
